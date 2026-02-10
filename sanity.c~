@@ -1,106 +1,96 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <signal.h>
-#include <sys/reboot.h>
+#include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
+#include <sys/reboot.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <signal.h>
+#include <errno.h>
 
-/* Clean power functions */
+/* --- Power Management --- */
 void poweroff(int sig) { 
-    printf("** %s... **\n", "Shutting down");
+    sync();
+    // Use LINUX_REBOOT_CMD_POWER_OFF for modern kernels
     reboot(RB_POWER_OFF); 
 }
 
 void restart(int sig)  { 
-    printf("** %s... **\n", "Rebooting");
+    sync();
     reboot(RB_AUTOBOOT); 
 }
 
-/* Helper to run a command and wait for it */
+/* --- Optimized Run --- */
 void run(char *cmd, char *args[]) {
+    if (access(cmd, X_OK) != 0) return;
     pid_t pid = fork();
     if (pid == 0) {
         execv(cmd, args);
         _exit(1);
     }
+    // Block until this specific setup task is done
     waitpid(pid, NULL, 0);
+}
+
+/* --- The "Non-Bloated" Non-Blocking Reaper --- */
+void reap_zombies() {
+    // WNOHANG makes this a "drive-by" reaping so we don't block the loop
+    while (waitpid(-1, NULL, WNOHANG) > 0);
 }
 
 int main() {
     if (getpid() != 1) return 1;
 
-    /* 1. Environment & Signals */
+    /* 1. Secure the Environment */
     clearenv();
     setenv("PATH", "/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin", 1);
     setenv("TERM", "linux", 1);
 
+    /* 2. Signal Handling - PID 1 style */
     signal(SIGUSR1, poweroff);
     signal(SIGINT,  restart);
+    signal(SIGCHLD, SIG_IGN); // Kernel will auto-reap if we don't care, OR...
     reboot(RB_DISABLE_CAD);
 
-    printf("** %s... **\n", "Booting Sanity Standalone");
+    /* 3. Execution Flow (Your existing logic is solid here) */
+    setup_api_filesystems();
+    setup_hardware();           
+    setup_terminal_subsystem(); 
+    setup_identity();
+    setup_network();
 
-    /* 2. Virtual Filesystems */
-    printf("** %s... **\n", "Mounting /proc and /sys");
-    mount("proc", "/proc", "proc", 0, NULL);
-    mount("sysfs", "/sys", "sysfs", 0, NULL);
-    
-    mkdir("/run", 0755);
-    mount("tmpfs", "/run", "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755,size=32M");
+    printf("** Sanity Standalone: System Ready **\n");
 
-    /* 3. UDEV - The Keyboard Fix */
-    printf("** %s... **\n", "Starting udevd");
-    pid_t udev_pid = fork();
-    if (udev_pid == 0) {
-        char *udev_args[] = {"/sbin/udevd", "--daemon", NULL};
-        execv("/sbin/udevd", udev_args);
-        _exit(1);
-    }
-    /* Give udevd a moment to initialize */
-    sleep(1); 
-
-    printf("** %s... **\n", "Triggering hardware scan");
-    char *trigger_args[] = {"/sbin/udevadm", "trigger", "--action=add", NULL};
-    run("/sbin/udevadm", trigger_args);
-
-    printf("** %s... **\n", "Waiting for devices to settle");
-    char *settle_args[] = {"/sbin/udevadm", "settle", NULL};
-    run("/sbin/udevadm", settle_args);
-
-    /* 4. Filesystem Logic */
-    printf("** %s... **\n", "Remounting root read-write");
-    mount(NULL, "/", NULL, MS_REMOUNT, NULL);
-
-    /* 5. Network Loopback */
-    printf("** %s... **\n", "Initializing loopback");
-    char *lo_args[] = {"/sbin/ifconfig", "lo", "127.0.0.1", "up", NULL};
-    run("/sbin/ifconfig", lo_args);
-
-    /* 6. Supervisory Loop */
-    printf("** %s... **\n", "Launching Getty");
     pid_t getty_pid = -1;
 
     while (1) {
-        if (getty_pid == -1) {
+        if (getty_pid <= 0) {
             getty_pid = fork();
             if (getty_pid == 0) {
+                // Give the getty its own session to avoid TTY hang-ups
+                setsid();
+                ioctl(0, TIOCSCTTY, 1);
                 char *agetty_args[] = {"/sbin/agetty", "--noclear", "tty1", "115200", "linux", NULL};
                 execv("/sbin/agetty", agetty_args);
                 _exit(1);
             }
         }
 
+        /* Wait for ANY change. If getty dies, re-spin. 
+           If an orphan dies, it's reaped.
+        */
         int status;
-        pid_t reaped = wait(&status);
+        pid_t exited = wait(&status); 
 
-        if (reaped == getty_pid) {
-            printf("** %s... **\n", "Getty exited. Respawning");
+        if (exited == getty_pid) {
             getty_pid = -1;
-            sleep(1); 
-        } 
+            sleep(1); // Prevent rapid-fire respawn if getty is broken
+        }
+        
+        // Drive-by reaping for any background orphans (udevd, etc)
+        reap_zombies();
     }
-
     return 0;
 }
