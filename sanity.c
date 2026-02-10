@@ -4,7 +4,6 @@
 #include <sys/stat.h>
 #include <sys/reboot.h>
 #include <sys/ioctl.h>
-#include <sys/swap.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -13,32 +12,36 @@
 #include <fcntl.h>
 #include <errno.h>
 
-/* --- Prototypes --- */
-void poweroff(int sig);
-void restart(int sig);
-void run(char *cmd, char *args[]);
-void setup_api_filesystems();
-void setup_terminal_subsystem();
-void setup_hardware();
-void setup_identity();
-void setup_network();
-void setup_swap();
+#define FIFO_PATH "/run/sanity.fifo"
 
-/* --- Power Management --- */
+/* --- System Control --- */
 
-void poweroff(int sig) { 
-    printf("\n** Shutting down... **\n");
+void kill_the_world() {
+    printf("\n** The system is going down NOW... **\n");
+    // Send TERM to everyone but us
+    kill(-1, SIGTERM);
+    sleep(2);
+    // Send KILL to the survivors
+    kill(-1, SIGKILL);
     sync();
-    reboot(RB_POWER_OFF); 
 }
 
-void restart(int sig)  { 
-    printf("\n** Rebooting... **\n");
-    sync();
-    reboot(RB_AUTOBOOT); 
+void panic() {
+    printf("\n** The system is going down NOW... **\n");
+    exit(42); // Kernel will panic immediately when PID 1 exits
 }
 
-/* --- Helpers --- */
+void poweroff() {
+    kill_the_world();
+    reboot(RB_POWER_OFF);
+}
+
+void restart() {
+    kill_the_world();
+    reboot(RB_AUTOBOOT);
+}
+
+/* --- Core Logic --- */
 
 void run(char *cmd, char *args[]) {
     if (access(cmd, X_OK) != 0) return;
@@ -47,142 +50,65 @@ void run(char *cmd, char *args[]) {
         execv(cmd, args);
         _exit(1);
     }
-    waitpid(pid, NULL, 0);
+    // Note: This remains blocking for boot-time setup scripts
+    waitpid(pid, NULL, 0); 
 }
-
-/* --- Subsystem Modules --- */
 
 void setup_api_filesystems() {
-    printf("** Mounting API filesystems... **\n");
     mount("proc", "/proc", "proc", 0, NULL);
     mount("sysfs", "/sys", "sysfs", 0, NULL);
-    
     mkdir("/run", 0755);
     mount("tmpfs", "/run", "tmpfs", MS_NOSUID | MS_NODEV, "mode=0755,size=32M");
-    mkdir("/dev/shm", 0755);
-    mount("tmpfs", "/dev/shm", "tmpfs", MS_NOSUID | MS_NODEV, "mode=1777");
 }
 
-void setup_terminal_subsystem() {
-    printf("** Setting up devpts... **\n");
-    mkdir("/dev/pts", 0755);
-    mount("devpts", "/dev/pts", "devpts", MS_NOSUID | MS_NOEXEC, "gid=5,mode=620");
-}
+/* --- The Listener --- */
 
-void setup_hardware() {
-    printf("** Starting udevd and triggering scan... **\n");
-    pid_t udev_pid = fork();
-    if (udev_pid == 0) {
-        char *udev_args[] = {"/sbin/udevd", "--daemon", NULL};
-        execv("/sbin/udevd", udev_args);
-        _exit(1);
+void handle_insomnia(int fd) {
+    char buf[64];
+    ssize_t n = read(fd, buf, sizeof(buf) - 1);
+    if (n <= 0) return;
+    buf[n] = '\0';
+
+    if (strcmp(buf, "die") == 0) {
+        kill_the_world();
+        printf("** System halted. **\n");
+        while(1) pause(); // Stay alive so kernel doesn't panic unless asked
+    } 
+    else if (strcmp(buf, "panic") == 0) {
+        panic();
     }
-    sleep(1); 
-
-    char *trigger_args[] = {"/sbin/udevadm", "trigger", "--action=add", NULL};
-    run("/sbin/udevadm", trigger_args);
-
-    char *settle_args[] = {"/sbin/udevadm", "settle", NULL};
-    run("/sbin/udevadm", settle_args);
-}
-
-void setup_identity() {
-    printf("** Remounting root RW and setting hostname... **\n");
-    mount(NULL, "/", NULL, MS_REMOUNT, NULL);
-
-    FILE *fp = fopen("/etc/HOSTNAME", "r");
-    if (fp) {
-        char name[64];
-        if (fgets(name, sizeof(name), fp)) {
-            name[strcspn(name, "\r\n")] = 0;
-            sethostname(name, strlen(name));
-        }
-        fclose(fp);
+    else if (strcmp(buf, "reboot") == 0) {
+        restart();
+    }
+    else if (strcmp(buf, "off") == 0) {
+        poweroff();
     }
 }
-
-void setup_network() {
-    printf("** Initializing Network... **\n");
-    char *net_args[] = {"/etc/rc.d/rc.inet1", "start", NULL};
-    run("/etc/rc.d/rc.inet1", net_args);
-}
-
-void setup_swap() {
-    printf("** Reading /etc/SWAP and activating... **\n");
-    FILE *fp = fopen("/etc/SWAP", "r");
-    if (fp) {
-        char swap_path[256];
-        if (fgets(swap_path, sizeof(swap_path), fp)) {
-            swap_path[strcspn(swap_path, "\r\n")] = 0;
-            if (swapon(swap_path, 0) == 0) {
-                printf("** Successfully enabled swap on %s **\n", swap_path);
-            } else {
-                printf("** Failed to enable swap: %s **\n", strerror(errno));
-            }
-        }
-        fclose(fp);
-    } else {
-        printf("** /etc/SWAP not found, skipping... **\n");
-    }
-}
-
-/* --- Main Entry --- */
 
 int main() {
     if (getpid() != 1) return 1;
 
-    /* Initial Environment */
+    /* Environment Setup */
     clearenv();
     setenv("PATH", "/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin", 1);
-    setenv("TERM", "linux", 1);
-
-    /* Signal Handling */
-    signal(SIGUSR1, poweroff);
-    signal(SIGINT,  restart);
-    reboot(RB_DISABLE_CAD);
-
-    printf("\n** Sanity Standalone Booting **\n");
-
-    /* Execution Flow */
-    setup_api_filesystems();
-    setup_hardware();           
-    setup_swap();
-    setup_terminal_subsystem(); 
-    setup_identity();
-    setup_network();
-
-    printf("** Launching Supervisor Loop **\n");
     
-    pid_t getty_pid = -1;
+    setup_api_filesystems();
+    
+    /* Create Command Pipe */
+    unlink(FIFO_PATH);
+    mkfifo(FIFO_PATH, 0600);
+    int fifo_fd = open(FIFO_PATH, O_RDONLY | O_NONBLOCK);
 
+    printf("\n** The system is going UP now... **\n");
+
+    /* Main Supervisor Loop */
     while (1) {
-        if (getty_pid <= 0) {
-            getty_pid = fork();
-            if (getty_pid == 0) {
-                setsid();
-                int fd = open("/dev/tty1", O_RDWR);
-                if (fd >= 0) {
-                    ioctl(fd, TIOCSCTTY, 1);
-                    close(fd);
-                }
+        handle_insomnia(fifo_fd);
 
-                char *agetty_args[] = {"/sbin/agetty", "--noclear", "tty1", "115200", "linux", NULL};
-                execv("/sbin/agetty", agetty_args);
-                _exit(1);
-            }
-        }
+        // Reap ANY orphaned children (The Reaper)
+        while (waitpid(-1, NULL, WNOHANG) > 0);
 
-        int status;
-        pid_t reaped = wait(&status);
-
-        if (reaped == getty_pid) {
-            printf("** Getty exited. Respawning... **\n");
-            getty_pid = -1;
-            sleep(1); 
-        } else {
-            /* Cleanup any background noise/orphans */
-            while (waitpid(-1, NULL, WNOHANG) > 0);
-        }
+        usleep(50000); // 50ms pulse
     }
 
     return 0;
