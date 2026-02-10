@@ -1,0 +1,7 @@
+NAME=Lambda
+VERSION="0.2"
+ID=lambda
+VERSION_ID=0.2
+PRETTY_NAME="Lambda Linux"
+ANSI_COLOR="0;34"
+VERSION_CODENAME=alpha
