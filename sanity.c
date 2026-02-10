@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <sys/reboot.h>
 #include <sys/ioctl.h>
+#include <sys/swap.h>
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,6 +22,7 @@ void setup_terminal_subsystem();
 void setup_hardware();
 void setup_identity();
 void setup_network();
+void setup_swap();
 
 /* --- Power Management --- */
 
@@ -92,7 +94,7 @@ void setup_identity() {
     if (fp) {
         char name[64];
         if (fgets(name, sizeof(name), fp)) {
-            name[strcspn(name, "\n")] = 0;
+            name[strcspn(name, "\r\n")] = 0;
             sethostname(name, strlen(name));
         }
         fclose(fp);
@@ -103,6 +105,25 @@ void setup_network() {
     printf("** Initializing Network... **\n");
     char *net_args[] = {"/etc/rc.d/rc.inet1", "start", NULL};
     run("/etc/rc.d/rc.inet1", net_args);
+}
+
+void setup_swap() {
+    printf("** Reading /etc/SWAP and activating... **\n");
+    FILE *fp = fopen("/etc/SWAP", "r");
+    if (fp) {
+        char swap_path[256];
+        if (fgets(swap_path, sizeof(swap_path), fp)) {
+            swap_path[strcspn(swap_path, "\r\n")] = 0;
+            if (swapon(swap_path, 0) == 0) {
+                printf("** Successfully enabled swap on %s **\n", swap_path);
+            } else {
+                printf("** Failed to enable swap: %s **\n", strerror(errno));
+            }
+        }
+        fclose(fp);
+    } else {
+        printf("** /etc/SWAP not found, skipping... **\n");
+    }
 }
 
 /* --- Main Entry --- */
@@ -125,6 +146,7 @@ int main() {
     /* Execution Flow */
     setup_api_filesystems();
     setup_hardware();           
+    setup_swap();
     setup_terminal_subsystem(); 
     setup_identity();
     setup_network();
