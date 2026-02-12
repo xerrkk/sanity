@@ -1,7 +1,0 @@
-NAME=Subversion
-VERSION="0.2"
-ID=svn
-VERSION_ID=0.2
-PRETTY_NAME="apacheSubversion"
-ANSI_COLOR="0;34"
-VERSION_CODENAME=alpha
