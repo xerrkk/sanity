@@ -4,11 +4,11 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define SANITY_DIR "/etc/gni.d/"
+#define SANITY_DIR "/etc/sherpk.d/"
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        printf("Usage: insomnia [reboot|off|die|enable <script>|disable <script>]\n");
+        printf("Usage: %s [reboot|off|die|enable <script>|disable <script>]\n", progname);
         return 1;
     }
 
@@ -36,9 +36,9 @@ int main(int argc, char *argv[]) {
     }
 
     // Handle signals to Sanity (FIFO logic)
-    int fd = open("/run/gni.fifo", O_WRONLY);
+    int fd = open("/run/sherpk.fifo", O_WRONLY);
     if (fd < 0) {
-        perror("** Cannot reach GNI (is the FIFO there?) **");
+        perror("** Cannot reach Sherpk (is the FIFO there?) **");
         return 1;
     }
 
