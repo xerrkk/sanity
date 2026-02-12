@@ -1,4 +1,3 @@
-;; /etc/gni.scm
 (use-modules (ice-9 ftw)
              (ice-9 match))
 
@@ -11,7 +10,7 @@
   (system* "/sbin/udevadm" "settle"))
 
 ;; The module loader
-(define (run-gni-modules)
+(define (run-modules)
   (let ((dir "/etc/sherpk.d"))
     (if (file-exists? dir)
         (let ((scripts (scandir dir (lambda (f) (string-suffix? ".scm" f)))))
@@ -22,5 +21,5 @@
                         scripts))))))
 
 (init-hardware)
-(run-gni-modules)
+(run-modules)
 (display "** All modules loaded. **\n")
