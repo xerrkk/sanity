@@ -4,11 +4,11 @@
 #include <string.h>
 #include <sys/stat.h>
 
-#define SANITY_DIR "/etc/sherpk.d/"
+#define SANITY_DIR "/etc/sherpa.d/"
 
 int main(int argc, char *argv[]) {
     if (argc < 2) {
-        printf("Usage: erkl [reboot|off|die|enable <script>|disable <script>]\n");
+        printf("Usage: sherpactl [reboot|off|die|enable <script>|disable <script>]\n");
         return 1;
     }
 
@@ -36,9 +36,9 @@ int main(int argc, char *argv[]) {
     }
 
     // Handle signals to Sanity (FIFO logic)
-    int fd = open("/run/sherpk.fifo", O_WRONLY);
+    int fd = open("/run/sherpa.fifo", O_WRONLY);
     if (fd < 0) {
-        perror("** Cannot reach Sherpk (is the FIFO there?) **");
+        perror("** Cannot reach Sherpa (is the FIFO there?) **");
         return 1;
     }
 

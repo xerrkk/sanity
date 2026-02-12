@@ -13,7 +13,7 @@
 #include <fcntl.h>
 #include <errno.h>
 
-#define FIFO_PATH "/run/sherpk.fifo"
+#define FIFO_PATH "/run/sherpa.fifo"
 
 /* --- Power Management --- */
 
@@ -58,10 +58,10 @@ static void inner_main(void *closure, int argc, char **argv) {
     printf("[SHERPK] Entering Guile VM...\n");
 
     /* Load the Master Script */
-    if (access("/etc/sherpk.scm", R_OK) == 0) {
-        scm_c_primitive_load("/etc/sherpk.scm");
+    if (access("/etc/sherpa.scm", R_OK) == 0) {
+        scm_c_primitive_load("/etc/sherpa.scm");
     } else {
-        printf("** /etc/sherpk.scm missing! /bin/sh? **\n");
+        printf("** /etc/sherpa.scm missing! /bin/sh? **\n");
         system("/bin/sh");
     }
 
@@ -130,7 +130,7 @@ int main(int argc, char **argv) {
     mkfifo(FIFO_PATH, 0600);
     int fifo_fd = open(FIFO_PATH, O_RDONLY | O_NONBLOCK);
 
-    printf("\n** Sherpk - a fine man\'s init **\n");
+    printf("\n** sherpa - a fine man\'s init **\n");
 
     scm_boot_guile(argc, argv, inner_main, &fifo_fd);
 
